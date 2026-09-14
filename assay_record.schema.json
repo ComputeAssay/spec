@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://basis.spec/schemas/basis-1/fleet-record.json",
+  "title": "ASSAY-1 Fleet Record",
+  "description": "A single deliverable compute fleet as defined by ASSAY-1 v0.1.",
+  "type": "object",
+  "required": [
+    "fleet_id", "operator", "operator_class", "is_resale", "resale_permitted",
+    "first_observed", "last_verified", "accelerator_model", "accelerator_count",
+    "accelerators_per_node", "hbm_gb_per_accelerator", "scale_up_interconnect",
+    "scale_up_domain_size", "fabric_type", "nic_bandwidth_gbps_per_accelerator",
+    "topology", "oversubscription_leaf_to_spine", "non_blocking_domain_size",
+    "storage_plane_separate", "tenant_isolation", "egress_cost_per_tb",
+    "cooling", "rack_power_density_kw", "contracted_load_mw",
+    "site_country", "site_region", "iso_rto_or_utility", "grid_status",
+    "energization_date_actual_or_forecast", "firm_mw", "interruptible_mw",
+    "contract_forms_offered", "list_price_usd_per_accelerator_hour",
+    "minimum_allocation", "provisioning_lead_time_days", "transferable",
+    "export_control_regime", "sanctioned_ownership_screen",
+    "assurance_tier", "attestation_date"
+  ],
+  "properties": {
+    "fleet_id":            { "type": "string", "pattern": "^BASIS-[A-Z0-9]{8}$" },
+    "operator":            { "type": "string" },
+    "operator_class":      { "enum": ["hyperscaler", "neocloud", "colo_tenant", "enterprise_private", "broker_inventory", "sovereign"] },
+    "is_resale":           { "type": "boolean" },
+    "underlying_operator": { "type": "string" },
+    "resale_permitted":    { "enum": ["yes", "no", "unknown"] },
+    "first_observed":      { "type": "string", "format": "date" },
+    "last_verified":       { "type": "string", "format": "date" },
+
+    "accelerator_model":                  { "type": "string" },
+    "accelerator_count":                  { "type": "integer", "minimum": 1 },
+    "accelerators_per_node":              { "type": "integer", "minimum": 1 },
+    "host_cpu":                           { "type": "string" },
+    "host_cpu_cores_per_accelerator":     { "type": "number", "minimum": 0 },
+    "sriov_or_passthrough":               { "enum": ["bare_metal", "passthrough", "vgpu", "container"] },
+    "mig_partitioned":                    { "type": "boolean" },
+
+    "hbm_gb_per_accelerator":             { "type": "integer", "minimum": 1 },
+    "hbm_bandwidth_tbps":                 { "type": "number", "minimum": 0 },
+    "host_dram_gb_per_node":              { "type": "integer", "minimum": 0 },
+
+    "scale_up_interconnect":              { "enum": ["nvlink4", "nvlink5", "infinity_fabric", "pcie_only", "other"] },
+    "scale_up_domain_size":               { "type": "integer", "minimum": 1 },
+    "scale_up_bandwidth_gbps_per_accelerator": { "type": "integer", "minimum": 0 },
+    "nvswitch_topology":                  { "enum": ["full_fat", "partial", "none"] },
+
+    "fabric_type":                        { "enum": ["ib_ndr", "ib_xdr", "roce_v2", "spectrum_x", "slingshot", "proprietary", "tcp_only"] },
+    "nic_bandwidth_gbps_per_accelerator": { "type": "integer", "minimum": 0 },
+    "nics_per_node":                      { "type": "integer", "minimum": 0 },
+    "topology":                           { "enum": ["rail_optimized_fat_tree", "fat_tree", "dragonfly", "torus", "flat", "undisclosed"] },
+    "oversubscription_leaf_to_spine":     { "type": "string", "pattern": "^[0-9]+:[0-9]+$" },
+    "non_blocking_domain_size":           { "type": "integer", "minimum": 1 },
+    "adaptive_routing":                   { "type": "boolean" },
+    "congestion_control":                 { "enum": ["dcqcn", "pfc_only", "credit_based", "timely", "proprietary", "none"] },
+    "lossless_configured":                { "type": "boolean" },
+    "in_network_reduction":               { "type": "boolean" },
+    "storage_plane_separate":             { "type": "boolean" },
+    "tenant_isolation":                   { "enum": ["dedicated_fabric", "partitioned", "shared_with_noisy_neighbors"] },
+    "measured_allreduce_busbw_gbps":      { "type": "number", "minimum": 0, "description": "DCB. Required for assurance_tier 3." },
+    "measured_alltoall_busbw_gbps":       { "type": "number", "minimum": 0 },
+
+    "scratch_type":                       { "enum": ["local_nvme", "parallel_fs", "object_only"] },
+    "scratch_read_gbps_per_node":         { "type": "number", "minimum": 0 },
+    "checkpoint_write_gbps_aggregate":    { "type": "number", "minimum": 0 },
+    "dataset_ingress_cost_per_tb":        { "type": "number", "minimum": 0 },
+    "egress_cost_per_tb":                 { "type": "number", "minimum": 0 },
+
+    "cooling":                            { "enum": ["air", "rear_door_hx", "direct_to_chip_liquid", "immersion"] },
+    "rack_power_density_kw":              { "type": "number", "minimum": 0 },
+    "contracted_load_mw":                 { "type": "number", "minimum": 0 },
+    "power_cost_usd_per_mwh":             { "type": "number", "minimum": 0 },
+    "pue_trailing_12mo":                  { "type": "number", "minimum": 1 },
+
+    "site_country":                       { "type": "string" },
+    "site_region":                        { "type": "string" },
+    "iso_rto_or_utility":                 { "type": "string" },
+    "grid_status":                        { "enum": ["energized", "interconnect_agreement_signed", "in_queue", "behind_the_meter", "hybrid"] },
+    "energization_date_actual_or_forecast": { "type": "string", "format": "date" },
+    "firm_mw":                            { "type": "number", "minimum": 0 },
+    "interruptible_mw":                   { "type": "number", "minimum": 0 },
+    "curtailment_notice_minutes":         { "type": "integer", "minimum": 0 },
+    "curtailment_hours_trailing_12mo":    { "type": "number", "minimum": 0 },
+    "onsite_generation_mw":               { "type": "number", "minimum": 0 },
+    "network_latency_ms_to_major_metros": {
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0 }
+    },
+
+    "contract_forms_offered": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["on_demand", "spot_preemptible", "reserved_1yr", "reserved_3yr", "bare_metal_lease"] }
+    },
+    "list_price_usd_per_accelerator_hour": { "type": "number", "minimum": 0 },
+    "observed_transacted_price":           { "type": "number", "minimum": 0 },
+    "minimum_allocation":                  { "type": "integer", "minimum": 1 },
+    "provisioning_lead_time_days":         { "type": "integer", "minimum": 0 },
+    "preemption_notice_seconds":           { "type": "integer", "minimum": 0 },
+    "sla_availability_pct":                { "type": "number", "minimum": 0, "maximum": 100 },
+    "sla_remedy":                          { "enum": ["credits", "refund", "none"] },
+    "transferable":                        { "type": "boolean" },
+
+    "node_mtbf_hours":                            { "type": "number", "minimum": 0 },
+    "job_interruption_rate_per_1000_gpu_days":    { "type": "number", "minimum": 0 },
+    "hot_spare_pct":                              { "type": "number", "minimum": 0, "maximum": 100 },
+    "healthcheck_automation":                     { "type": "boolean" },
+    "median_time_to_replace_failed_node_hours":   { "type": "number", "minimum": 0 },
+
+    "export_control_regime":       { "type": "string" },
+    "data_residency_guarantees":   { "type": "array", "items": { "type": "string" } },
+    "certifications":              { "type": "array", "items": { "type": "string" } },
+    "sanctioned_ownership_screen": { "enum": ["clear", "flagged", "unscreened"] },
+
+    "assurance_tier":   { "type": "integer", "minimum": 0, "maximum": 3 },
+    "attesting_party":  { "type": "string" },
+    "attestation_date": { "type": "string", "format": "date" },
+    "harness_run_id":   { "type": "string" },
+    "harness_version":  { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "assurance_tier": { "const": 3 } }, "required": ["assurance_tier"] },
+      "then": { "required": ["measured_allreduce_busbw_gbps", "harness_run_id", "harness_version", "job_interruption_rate_per_1000_gpu_days"] }
+    },
+    {
+      "if": { "properties": { "is_resale": { "const": true } }, "required": ["is_resale"] },
+      "then": { "required": ["underlying_operator"] }
+    }
+  ],
+  "additionalProperties": false
+}
