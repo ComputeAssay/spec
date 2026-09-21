@@ -419,7 +419,7 @@ Stated plainly, because a spec that hides its soft spots does not get adopted.
 
 1. **The soft-penalty weights in §5.2 are invented.** They are an engineer's prior, not a fit to data. Until there are several hundred observed transactions, grades B and C are opinion.
 2. **DCB is gameable at the margin** despite §8.2. A determined operator can schedule the run during a quiet window. Repeated sampling is the only real defense and it costs the operator goodwill.
-3. **Tier 0 is most of the world.** Enterprise contracts are under NDA. The registry will over-represent the transparent long tail and under-represent the hyperscalers, which is exactly backwards from where the volume is.
+3. **Tier 0 is most of the world — but for basis, it is the *right* part of the world.** Hyperscaler and enterprise contracts are under NDA, so this registry under-represents hyperscaler *volume*. For measuring **global capacity**, that is a genuine gap. For measuring **basis against the listed contracts, it is not** — because the CME × Silicon Data H100 and B200 compute futures (listing 2026-10-05) settle on the *neocloud, non-hyperscaler on-demand* rental index (tickers SDH100RT / SDB200RT); Silicon Data publishes hyperscaler pricing as a **separate reading the contracts do not reference**. The relevant universe for basis is the settlement constituent set — which is exactly the transparent neocloud population this registry covers densely. Coverage is aimed *at* the settlement segment, not away from it. The honest residual gap is enterprise-private and colocation capacity, which trades on neither the index nor this registry.
 4. **`resale_permitted` may be `no` almost everywhere.** If the major suppliers contractually forbid transfer, the deliverable secondary market in §6 is confined to neoclouds and brokers.
 5. **The whole thesis is levered to scarcity.** If accelerator supply loosens and prices flatten, hedging demand thins, basis compresses toward zero, and this becomes a small trade-press business.
 6. **Silicon generations churn faster than specifications.** Every 12–18 months the Reference Configuration table needs rebuilding, and each rebuild breaks historical series continuity.
@@ -430,5 +430,6 @@ Stated plainly, because a spec that hides its soft spots does not get adopted.
 *ASSAY-1 v0.1. Draft for comment. Nothing in this document is investment advice or a representation about any named company or product.*
 
 **Changelog**
+- v0.1.2 (2026-09-20) — rewrote §10.3: the neocloud skew is correct targeting, not a weakness, because the CME × Silicon Data settlement index (SDH100RT / SDB200RT) is itself neocloud/non-hyperscaler on-demand. Residual gap narrowed to enterprise-private + colocation.
 - v0.1.1 (2026-09-10, migrated to repo) — added §4.3 reserved quality dimension, per the design requirement that workload classes survive the move from delivered capacity to delivered work without breaking historical series.
 - v0.1 (2026-09) — initial draft: record, headline metrics, workload classes, substitutability grade, basis, assurance tiers, harness.
