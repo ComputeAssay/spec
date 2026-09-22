@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://computeassay.com/schemas/assay-1/certificate.json",
+  "title": "ASSAY-1 Measured Grade Certificate",
+  "description": "A machine-readable, signed attestation of a measured (Tier-3) grade for one fleet with respect to one workload class, per ASSAY-1 v0.1 §8.3. Designed to be referenced by a contract (a lender covenant, an EFP delivery term, a procurement requirement) via its certificate_id + ledger inclusion proof, rather than a marketing page. Every field a counterparty relies on is either measured or a disclosed caveat — never inferred.",
+  "type": "object",
+  "required": [
+    "certificate_id", "spec_version", "fleet_id", "operator", "operator_class",
+    "source_class", "workload_class", "measured_grade", "assurance_tier",
+    "primary_metric", "measurement_window", "tenancy", "run_nonce",
+    "harness_version", "probe", "issued_utc", "expires_utc", "ledger", "signatures"
+  ],
+  "properties": {
+    "certificate_id":   { "type": "string", "pattern": "^ASSAY-CERT-[0-9]{4}-[A-Z0-9]{6}$",
+                          "description": "e.g. ASSAY-CERT-2026-7QX4K2. The hash a contract references." },
+    "spec_version":     { "type": "string", "const": "ASSAY-1 v0.1" },
+
+    "fleet_id":         { "type": "string",
+                          "description": "The registry fleet identifier this certificate attests." },
+    "operator":         { "type": "string" },
+    "operator_class":   { "enum": ["hyperscaler", "neocloud", "colo_tenant", "enterprise_private", "broker_inventory", "sovereign"] },
+
+    "source_class": {
+      "enum": ["first-party-assay", "operator-submitted"],
+      "description": "THE honesty field. 'first-party-assay' = the registry rented and measured the fleet itself. 'operator-submitted' = the operator ran the open harness on their own metal and signed the output; the registry verified the signature, nonce, and §8.2 disclosures, NOT the metal. Both are measured (unlike a disclosure grade); their independence differs and is stated here, on the certificate."
+    },
+
+    "workload_class":   { "enum": ["W1", "W2", "W3", "W4", "W5"],
+                          "description": "A grade is meaningful only w.r.t. a workload class (§0.1, §4). No context-free grade." },
+    "measured_grade":   { "enum": ["A", "B", "C", "F"],
+                          "description": "Substitutability grade (§5) computed from the MEASURED metrics below for this workload class — not from disclosures." },
+    "assurance_tier":   { "type": "integer", "const": 3, "description": "Measured = Tier 3 (§7). Anything below is a disclosure grade and does not get a certificate." },
+
+    "primary_metric": {
+      "type": "object",
+      "description": "The measured number the grade rests on. For W1/W3 (training/scale-out) this is DCB (§3.3).",
+      "required": ["name", "value", "unit"],
+      "properties": {
+        "name":  { "type": "string", "examples": ["measured_allreduce_busbw_gbps"] },
+        "value": { "type": "number", "minimum": 0 },
+        "unit":  { "type": "string", "examples": ["Gbps"] },
+        "line_rate_reference":     { "type": "number", "minimum": 0,
+                                     "description": "Vendor-published line rate for the same allocation, if any — for the efficiency ratio." },
+        "delivered_over_line_rate": { "type": "number", "minimum": 0, "maximum": 1.2,
+                                      "description": "value / line_rate_reference. The DCB story: >=0.9 excellent, 0.5-0.9 real-but-note-the-gap, <0.5 red flag (§8, first-harness-run.md)." }
+      }
+    },
+    "secondary_metrics": {
+      "type": "array",
+      "description": "Optional additional probes once the harness ships them (alltoall, csd-probe, checkpoint-burst, serving-latency). Same {name,value,unit} shape.",
+      "items": { "type": "object", "required": ["name", "value", "unit"] }
+    },
+
+    "measurement_window": {
+      "type": "object",
+      "required": ["start_utc", "end_utc"],
+      "description": "n=1 honesty: a certificate attests THIS window, not the fleet in general (§10.2). Re-certification resamples.",
+      "properties": {
+        "start_utc": { "type": "string", "format": "date-time" },
+        "end_utc":   { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "tenancy": {
+      "type": "object",
+      "required": ["concurrent_tenants", "allocation_description", "allocation_equals_max_sellable"],
+      "description": "§8.2 anti-gaming disclosures, recorded on the certificate so a reader sees the conditions, not just the number.",
+      "properties": {
+        "concurrent_tenants":            { "type": ["integer", "null"], "minimum": 0,
+                                           "description": "Tenants sharing the fabric during the run. null = not declared (itself a finding)." },
+        "allocation_description":        { "type": "string", "examples": ["16 GPU / 2 node — the max this self-serve product sells as one unit"] },
+        "allocation_equals_max_sellable": { "type": "boolean",
+                                            "description": "True iff the measured allocation equals the largest the operator will actually sell (§8.2 — no golden-slice benchmarking). False must be explained in notes." },
+        "notes": { "type": "string" }
+      }
+    },
+
+    "run_nonce":        { "type": "string",
+                          "description": "Registry-issued, time-bounded token that makes the run Verified-eligible (§8.2). Absent nonce → not a certificate, ingests as self-reported." },
+    "harness_version":  { "type": "string", "examples": ["0.1.0-alpha"] },
+    "probe":            { "type": "string", "examples": ["nccl-allreduce"] },
+
+    "issued_utc":       { "type": "string", "format": "date-time" },
+    "expires_utc":      { "type": "string", "format": "date-time",
+                          "description": "Decay is a first-class term (§7): a measured grade expires 90 days after the measurement window without re-run. A contract references the certificate WITH its expiry — a lapsed certificate is a covenant event, not a silent staleness." },
+
+    "ledger": {
+      "type": "object",
+      "required": ["repo", "commit_sha", "record_path"],
+      "description": "Inclusion proof in the public measurement ledger (docs/measurement-ledger.md). This is what makes the certificate un-backdatable and verifiable without trusting the registry.",
+      "properties": {
+        "repo":            { "type": "string", "examples": ["github.com/ComputeAssay/measurements"] },
+        "commit_sha":      { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "record_path":     { "type": "string" },
+        "record_sha256":   { "type": "string", "pattern": "^[0-9a-f]{64}$",
+                             "description": "sha256 of the harness output file (matches the harness's own sha256 field)." },
+        "ots_proof_path":  { "type": "string", "description": "OpenTimestamps .ots proof anchoring the record to Bitcoin block time." }
+      }
+    },
+
+    "signatures": {
+      "type": "object",
+      "required": ["registry_fingerprint"],
+      "description": "Published GPG fingerprints; verify against ComputeAssay/measurements KEYS.md.",
+      "properties": {
+        "registry_fingerprint": { "type": "string", "description": "The registry key that issued/countersigned this certificate." },
+        "operator_fingerprint": { "type": "string", "description": "Present for source_class=operator-submitted: the operator's key that signed the raw run." }
+      }
+    },
+
+    "notes": { "type": "string", "description": "Any caveat a reader must see: software stack date, single-node-only limitation, why allocation_equals_max_sellable is false, resampling commitment, etc." }
+  },
+  "additionalProperties": false
+}

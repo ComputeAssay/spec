@@ -398,6 +398,25 @@ An open-source, MIT-licensed benchmark suite an operator runs on their own fleet
 - Results signed with a run nonce issued by the registry; results older than the nonce window are rejected.
 - Refusal to publish a completed run is itself recorded. An operator who runs and withholds is flagged.
 
+### 8.3 The measured grade and the assay certificate
+
+A **measured grade** is a §5 substitutability grade (A/B/C/F) computed from *measured* metrics — DCB (§3.3) and its siblings — for a stated workload class, not from disclosures. It is Tier 3 (§7). Only a measured grade earns a certificate; a disclosure grade (Tier 0–1) never does. A grade is always with respect to a workload class; there is no context-free measured grade (§0.1).
+
+**Two source classes, both measured, stated on the certificate.** Independence is not binary and is not hidden:
+
+- `first-party-assay` — the registry rented the fleet and ran the harness itself.
+- `operator-submitted` — the operator ran the open harness on its own metal and signed the output; the registry verified the signature, the run nonce, and the §8.2 disclosures, **not the metal.**
+
+Both yield a real measured number (unlike a disclosure grade); they differ in independence, and the difference is a required field on the certificate, not a footnote. Operator-submitted is the supplier-pull default (§8): it needs no capital, and the operator publishes its *own* fleet, which sidesteps third-party benchmark-publication restrictions.
+
+**The assay certificate** (`assay_certificate.schema.json`) is the machine-readable, signed attestation of a measured grade for one fleet and one workload class. It carries: the primary measured metric and its delivered-over-line-rate ratio; the §8.2 tenancy disclosures (concurrent tenants, allocation, whether the allocation equals the maximum sellable); the measurement window; the **decay/expiry** term (§7 — a measured grade expires 90 days after its window without re-run, so staleness is a *defined event*, not a silent condition); the run nonce, harness version, and probe; and a **ledger inclusion proof.**
+
+**The ledger.** Every measurement lands in a public, append-only record of GPG-signed commits, each anchored to a trusted timestamp (OpenTimestamps → Bitcoin). A signed git history *is* a hash-chained transparency log; the anchor closes the trusted-time gap. The result is verifiable **without trusting the registry** — signature, commit chain, and Bitcoin anchor are all independently checkable — and it is un-backdatable: a history begun today is provably ahead of one begun tomorrow, forever. This is the "time-accumulated state" the whole standard rests on, and it costs nothing to run. (Implementation: the working note in the project's `measurement-ledger.md`.)
+
+**What the certificate attests, and what it does not.** It attests *what was measured, under which disclosed conditions, when, signed by whom* — a true and checkable fact. It does **not**, for operator-submitted runs, assert the metal was not gamed; that is the province of §8.2 and of repeated sampling (§10.2), and the harder anti-gaming machinery (attestation, seeded non-recognizable workloads) is intentionally staged for when a grade moves contract money. n=1 honesty holds: a certificate attests its window, never the fleet in general.
+
+**Purpose.** The certificate exists to be **referenced by a contract** — a credit covenant, an EFP delivery term, a procurement warranty — by its `certificate_id` and inclusion proof, rather than a marketing page. That is the standard → reference → settlement path in §9 made concrete: the settlement standard a market cites is built from an object like this one, verifiable and neutral. A price index can be cloned; a certificate that a counterparty's executed agreement points to cannot.
+
 ---
 
 ## 9. Publication
