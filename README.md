@@ -10,6 +10,12 @@ ASSAY-1 is the missing layer: the record format, headline metrics, workload clas
 |---|---|
 | [`ASSAY-1.md`](ASSAY-1.md) | The specification: 12-field-group record, CSD/NBD/DCB/PFI headline metrics, workload classes W1–W5, A/B/C/F substitutability grades, the basis calculation, assurance tiers, verification harness |
 | [`assay_record.schema.json`](assay_record.schema.json) | Machine-readable record schema (JSON Schema) |
+| [`assay_certificate.schema.json`](assay_certificate.schema.json) | Assay certificate schema (§8.3) |
+| [`harness/`](harness/) | Assay Verification Harness v0.1.0 (`nccl-allreduce` probe) and `verify_ledger.py` |
+| [`ASSAY-TT-1.md`](ASSAY-TT-1.md) | Standard compute tranche + sublease/assignment term sheet (draft) |
+| [`data/sites.json`](data/sites.json) | Delivery-risk evidence and DR-1 v0.1 grades for 10 announced AI sites |
+| [`data/forecasts.jsonl`](data/forecasts.jsonl) | Append-only, hash-chained delivery forecast ledger — verify with `python3 harness/verify_ledger.py data/forecasts.jsonl` |
+| [`data/refresh/`](data/refresh/) | Weekly price re-surveys, each row with the quoted price text and status |
 
 ## Status
 
