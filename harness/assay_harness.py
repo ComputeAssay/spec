@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Assay Verification Harness — v0.1.0. MIT license. https://computeassay.com/harness.html
+# Assay Verification Harness — v0.2.0. MIT license. https://computeassay.com/harness.html
 # Probe: nccl-allreduce (ASSAY-1 §8.1). Wraps NVIDIA nccl-tests' all_reduce_perf, parses bus
 # bandwidth, captures environment + §8.2 disclosures, binds the run to a public randomness-beacon nonce,
 # and emits self-hashed (optionally GPG-signed) JSON for registry ingestion. Stdlib only.
@@ -9,6 +9,8 @@
 #   ./assay_harness.py --launcher "mpirun -np 64 -hostfile hosts" --gpus-per-node 8 \
 #       --fetch-nonce --tenants 3 --allocation "64 GPU / 8 node block" --line-rate-gbps 3200
 #   ./assay_harness.py --from-output run.log --nonce <N>  # you ran all_reduce_perf yourself
+#   ./assay_harness.py --evidence-only --evidence nvidia-cre:cre-report.json \
+#       --evidence clustermax-audit:audit.json --fetch-nonce   # bundle third-party acceptance evidence
 import argparse
 import hashlib
 import json
@@ -19,7 +21,7 @@ import sys
 import time
 import urllib.request
 
-HARNESS_VERSION = "0.1.0"
+HARNESS_VERSION = "0.2.0"
 SPEC = "ASSAY-1 v0.1 §8"
 NONCE_URL = "https://computeassay.com/api/nonce"
 
@@ -101,6 +103,67 @@ def self_test():
           f"= {curve[1 << 30] * 8:.0f} Gbps", file=sys.stderr)
 
 
+EVIDENCE_TYPES = {
+    "clustermax-audit": "SemiAnalysis ClusterMAX audit output (their free, open audit tool)",
+    "nvidia-cre": "NVIDIA Cluster Readiness Engine certification report (nvcrectl)",
+    "nccl-log": "raw nccl-tests output (all_reduce_perf / all_to_all_perf)",
+    "other": "any other acceptance artifact (burn-in log, provider report)",
+}
+PASS = {"pass", "passed", "ok", "success", "succeeded", "healthy", "true"}
+FAIL = {"fail", "failed", "error", "unhealthy", "false", "thresholdviolation", "hardwarefailuredetected", "workloadfailed"}
+
+
+def _count_status(node, acc):
+    """Heuristic: count pass/fail values under status-like keys anywhere in a JSON document."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, (str, bool)) and k.lower() in ("status", "result", "outcome", "verdict", "state", "reason", "passed", "ok"):
+                t = str(v).lower().replace(" ", "")
+                if t in PASS:
+                    acc["pass"] += 1
+                elif t in FAIL:
+                    acc["fail"] += 1
+            else:
+                _count_status(v, acc)
+    elif isinstance(node, list):
+        for v in node:
+            _count_status(v, acc)
+    return acc
+
+
+def attach_evidence(spec):
+    """--evidence TYPE:PATH -> hashed, summarised record. The original file is the evidence; the summary is advisory."""
+    if ":" not in spec:
+        sys.exit(f"FATAL: --evidence expects TYPE:PATH (types: {', '.join(EVIDENCE_TYPES)})")
+    kind, path = spec.split(":", 1)
+    if kind not in EVIDENCE_TYPES:
+        sys.exit(f"FATAL: unknown evidence type {kind!r} (types: {', '.join(EVIDENCE_TYPES)})")
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        sys.exit(f"FATAL: cannot read evidence {path}: {e}")
+    rec = {"type": kind, "describes": EVIDENCE_TYPES[kind], "filename": path.rsplit("/", 1)[-1],
+           "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "summary": None}
+    text = raw.decode("utf-8", errors="replace")
+    if kind == "nccl-log":
+        curve = parse_busbw(text)
+        if curve:
+            top = max(curve)
+            rec["summary"] = {"rows_parsed": len(curve), "busbw_GBps_at_largest": curve[top], "largest_bytes": top,
+                              "busbw_gbps_at_largest": round(curve[top] * 8, 1)}
+    else:
+        try:
+            doc = json.loads(text)
+            counts = _count_status(doc, {"pass": 0, "fail": 0})
+            rec["summary"] = {"format": "json", "top_level_keys": list(doc)[:20] if isinstance(doc, dict) else None,
+                              "status_values_pass": counts["pass"], "status_values_fail": counts["fail"]}
+        except ValueError:
+            rec["summary"] = {"format": "text", "lines": text.count("\n") + 1,
+                              "lines_mentioning_fail": sum(1 for ln in text.splitlines() if "fail" in ln.lower())}
+    return rec
+
+
 def main():
     ap = argparse.ArgumentParser(description=f"Assay harness {HARNESS_VERSION} — nccl-allreduce probe")
     ap.add_argument("--binary", default="all_reduce_perf", help="path to nccl-tests all_reduce_perf")
@@ -117,6 +180,11 @@ def main():
     ap.add_argument("--sign", default="", help="GPG key id — writes a detached .asc next to the output")
     ap.add_argument("--out", default="", help="output path (default assay-probe-<ts>.json)")
     ap.add_argument("--self-test", action="store_true", help="check the parser against a bundled sample and exit")
+    ap.add_argument("--evidence", action="append", default=[], metavar="TYPE:PATH",
+                    help="attach acceptance evidence produced by another tool, hashed into the result. Repeatable. "
+                         "TYPE is one of: " + ", ".join(EVIDENCE_TYPES))
+    ap.add_argument("--evidence-only", action="store_true",
+                    help="skip the probe and emit a nonce-bound evidence bundle from --evidence files alone")
     args = ap.parse_args()
 
     if args.self_test:
@@ -126,6 +194,36 @@ def main():
     if args.fetch_nonce:
         args.nonce, nonce_meta = fetch_nonce()
         print(f"nonce issued {nonce_meta.get('issued_utc')} · expires {nonce_meta.get('expires_utc')}", file=sys.stderr)
+
+    evidence = [attach_evidence(e) for e in args.evidence]
+    if args.evidence_only:
+        if not evidence:
+            sys.exit("FATAL: --evidence-only needs at least one --evidence TYPE:PATH")
+        started = time.time()
+        result = {
+            "probe": "evidence-bundle", "spec": SPEC, "harness_version": HARNESS_VERSION,
+            "run_nonce": args.nonce or None, "nonce_issued_utc": (nonce_meta or {}).get("issued_utc"),
+            "verified_eligible": False,
+            "bundled_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
+            "evidence": evidence,
+            "note": "Third-party acceptance evidence, hashed and bound to the run nonce. The nonce proves when the bundle "
+                    "was made, not when the evidence was generated; registry review reads the original files. "
+                    "A Verified DCB grade still requires the nccl-allreduce probe.",
+            "disclosures": {"allocation": args.allocation or "NOT DECLARED", "allocation_is_max_sellable": bool(args.max_sellable),
+                            "concurrent_tenants": args.tenants},
+        }
+        body = json.dumps(result, indent=1, sort_keys=True)
+        result["sha256"] = hashlib.sha256(body.encode()).hexdigest()
+        out_path = args.out or f"assay-evidence-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        with open(out_path, "w") as f:
+            json.dump(result, f, indent=1, sort_keys=True)
+        for e in evidence:
+            print(f"evidence {e['type']}: {e['filename']} sha256 {e['sha256'][:16]}… summary {e['summary']}", file=sys.stderr)
+        print(f"wrote {out_path}", file=sys.stderr)
+        if args.sign:
+            code, _, err = sh(f"gpg --local-user {args.sign} --armor --detach-sign {out_path}", timeout=60)
+            print(f"signed: {out_path}.asc" if code == 0 else f"WARN: gpg failed: {err}", file=sys.stderr)
+        return
 
     started = time.time()
     if args.from_output:
@@ -169,6 +267,7 @@ def main():
             "allocation_is_max_sellable": bool(args.max_sellable),
             "concurrent_tenants": args.tenants,
         },
+        "evidence": evidence,
         "environment": capture_env() if not args.from_output else {"harness_version": HARNESS_VERSION, "spec": SPEC, "note": "parsed from log; environment not captured"},
         "raw_output": out,
     }

@@ -1,11 +1,11 @@
 # Assay Verification Harness
 
-**v0.1.0 — the `nccl-allreduce` probe.** MIT-licensed, runs on your own metal, emits
+**v0.2.0 — the `nccl-allreduce` probe, plus third-party acceptance evidence.** MIT-licensed, runs on your own metal, emits
 signed JSON the registry ingests. This is the measured tier of [ASSAY-1](../spec/ASSAY-1.md)
 (§8): grades on computeassay.com describe what sellers publish; a harness run replaces the
 claim with a measurement.
 
-**Status:** v0.1.0. v0.1 implements one probe of the seven in §8.1 — measured all-reduce bus
+**Status:** v0.2.0. v0.1 implements one probe of the seven in §8.1 — measured all-reduce bus
 bandwidth (DCB) across your largest sellable allocation. It is the probe that matters most:
 DCB is the number that separates a training cluster from eight GPUs sharing a name. The
 remaining probes (`nccl-alltoall`, `csd-probe`, `checkpoint-burst`, `serving-latency`,
@@ -58,3 +58,30 @@ nonce; we verify plausibility against your published specs either way.
 The first operators through the harness are graded **free** — we run the probe with your
 team, you keep the raw output, the teardown publishes either way. See
 [computeassay.com/operators.html](https://computeassay.com/operators.html).
+
+## Third-party acceptance evidence (v0.2.0)
+
+Acceptance tests already exist; a buyer shouldn't have to pick one. `--evidence TYPE:PATH` (repeatable) hashes another
+tool's output into the result and binds it to the run nonce, so a counterparty can later check that the report they are
+shown is the one that was bundled.
+
+```bash
+# attach evidence to a probe run
+./assay_harness.py --launcher "mpirun -np 64 -hostfile hosts.txt" --gpus-per-node 1 --fetch-nonce \
+    --evidence nvidia-cre:cre-report.json --evidence clustermax-audit:audit-output.json
+
+# bundle evidence alone, no probe
+./assay_harness.py --evidence-only --fetch-nonce --evidence clustermax-audit:audit-output.json
+```
+
+| Type | Source | What the harness reads |
+|---|---|---|
+| `clustermax-audit` | SemiAnalysis's free ClusterMAX audit tool | hash; pass/fail status counts (JSON) or lines mentioning failure |
+| `nvidia-cre` | NVIDIA Cluster Readiness Engine report | hash; pass/fail status counts |
+| `nccl-log` | raw nccl-tests output | hash; bus bandwidth at the largest message size |
+| `other` | burn-in logs, provider reports | hash only |
+
+The summary is advisory; review reads the original file. The nonce proves when evidence was *bundled*, not generated,
+so under ASSAY-TT-1 it must be produced inside the acceptance window. An evidence bundle alone never earns a Verified
+DCB grade — that still takes the `nccl-allreduce` probe.
+
