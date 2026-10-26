@@ -1,11 +1,11 @@
 # Assay Verification Harness
 
-**v0.1.0-alpha — the `nccl-allreduce` probe.** MIT-licensed, runs on your own metal, emits
+**v0.1.0 — the `nccl-allreduce` probe.** MIT-licensed, runs on your own metal, emits
 signed JSON the registry ingests. This is the measured tier of [ASSAY-1](../spec/ASSAY-1.md)
 (§8): grades on computeassay.com describe what sellers publish; a harness run replaces the
 claim with a measurement.
 
-**Status:** alpha. v0.1 implements one probe of the seven in §8.1 — measured all-reduce bus
+**Status:** v0.1.0. v0.1 implements one probe of the seven in §8.1 — measured all-reduce bus
 bandwidth (DCB) across your largest sellable allocation. It is the probe that matters most:
 DCB is the number that separates a training cluster from eight GPUs sharing a name. The
 remaining probes (`nccl-alltoall`, `csd-probe`, `checkpoint-burst`, `serving-latency`,
@@ -18,19 +18,27 @@ remaining probes (`nccl-alltoall`, `csd-probe`, `checkpoint-burst`, `serving-lat
 - [nccl-tests](https://github.com/NVIDIA/nccl-tests) built for your stack (`all_reduce_perf`
   on `$PATH`, or point `--binary` at it).
 - Your usual multi-node launcher (mpirun/srun) if the allocation spans nodes.
-- A run nonce from the registry (reply "harness" to any issue of the
-  [Delivered Compute Report](https://computeassay.substack.com)) — results without a
-  registry-issued nonce are ingested as self-reported, not Verified.
+- A run nonce: `--fetch-nonce` pulls one from https://computeassay.com/api/nonce. Nonces are
+  rounds of the public [drand](https://drand.love) randomness beacon, so anyone can check a run
+  was not started before the nonce existed. Valid 72 h. Results without a nonce are ingested
+  as self-reported, not Verified.
 
 ## Run
 
 ```bash
+# check the parser first (no GPUs needed)
+./assay_harness.py --self-test
+
 # single node, 8 GPUs
-./assay_harness.py --gpus 8 --nonce <NONCE-FROM-REGISTRY>
+./assay_harness.py --gpus 8 --fetch-nonce
 
 # multi-node: wrap your launcher; the harness parses the combined output
 ./assay_harness.py --launcher "mpirun -np 64 -hostfile hosts.txt" --gpus-per-node 8 \
-    --nonce <NONCE> --tenants 3
+    --fetch-nonce --tenants 3 --allocation "64 GPU / 8 node block" --max-sellable \
+    --line-rate-gbps 3200
+
+# already ran all_reduce_perf yourself? parse the log
+./assay_harness.py --from-output run.log --nonce <NONCE>
 ```
 
 Output: `assay-probe-<timestamp>.json` — busbw at 1 GiB plus the 16 MiB–512 MiB curve,

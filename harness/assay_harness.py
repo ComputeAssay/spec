@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-# Assay Verification Harness — v0.1.0-alpha. MIT license.
-# Probe: nccl-allreduce (ASSAY-1 §8.1). Wraps NVIDIA nccl-tests' all_reduce_perf, parses
-# bus bandwidth, captures environment + §8.2 disclosures, emits self-hashed (optionally
-# GPG-signed) JSON for registry ingestion. Stdlib only.
+# Assay Verification Harness — v0.1.0. MIT license. https://computeassay.com/harness.html
+# Probe: nccl-allreduce (ASSAY-1 §8.1). Wraps NVIDIA nccl-tests' all_reduce_perf, parses bus
+# bandwidth, captures environment + §8.2 disclosures, binds the run to a public randomness-beacon nonce,
+# and emits self-hashed (optionally GPG-signed) JSON for registry ingestion. Stdlib only.
+#
+#   ./assay_harness.py --self-test                       # parser check, no GPUs needed
+#   ./assay_harness.py --gpus 8 --fetch-nonce            # single node
+#   ./assay_harness.py --launcher "mpirun -np 64 -hostfile hosts" --gpus-per-node 8 \
+#       --fetch-nonce --tenants 3 --allocation "64 GPU / 8 node block" --line-rate-gbps 3200
+#   ./assay_harness.py --from-output run.log --nonce <N>  # you ran all_reduce_perf yourself
 import argparse
 import hashlib
 import json
@@ -11,9 +17,27 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 
-HARNESS_VERSION = "0.1.0-alpha"
+HARNESS_VERSION = "0.1.0"
 SPEC = "ASSAY-1 v0.1 §8"
+NONCE_URL = "https://computeassay.com/api/nonce"
+
+# Synthetic all_reduce_perf output in the exact nccl-tests table format — used only by --self-test.
+SAMPLE = """#
+#                                                              out-of-place                       in-place
+#       size         count      type   redop    root     time   algbw   busbw #wrong     time   algbw   busbw #wrong
+#        (B)    (elements)                               (us)  (GB/s)  (GB/s)            (us)  (GB/s)  (GB/s)
+    16777216       4194304     float     sum      -1    194.3   86.35  151.11      0    193.8   86.57  151.50      0
+    33554432       8388608     float     sum      -1    352.9   95.08  166.39      0    351.7   95.41  166.97      0
+    67108864      16777216     float     sum      -1    669.4  100.25  175.44      0    668.1  100.45  175.79      0
+   134217728      33554432     float     sum      -1   1291.6  103.92  181.86      0   1290.2  104.03  182.05      0
+   268435456      67108864     float     sum      -1   2531.0  106.06  185.60      0   2529.4  106.13  185.72      0
+   536870912     134217728     float     sum      -1   5008.7  107.19  187.58      0   5006.9  107.23  187.65      0
+  1073741824     268435456     float     sum      -1   9961.2  107.79  188.64      0   9958.5  107.82  188.69      0
+# Out of bounds values : 0 OK
+# Avg bus bandwidth    : 176.69
+"""
 
 
 def sh(cmd, timeout=120):
@@ -36,6 +60,9 @@ def capture_env():
     code, out, _ = sh("nvidia-smi topo -m", timeout=60)
     if code == 0:
         env["topology_matrix"] = out
+    code, out, _ = sh("ibstat -l 2>/dev/null || ls /sys/class/infiniband 2>/dev/null", timeout=30)
+    if code == 0 and out:
+        env["ib_devices"] = out.split()
     code, out, _ = sh("hostname")
     env["hostname"] = out if code == 0 else None
     return env
@@ -55,51 +82,94 @@ def parse_busbw(text):
     return curve
 
 
+def fetch_nonce():
+    try:
+        with urllib.request.urlopen(NONCE_URL, timeout=20) as r:
+            body = json.loads(r.read().decode())
+        return body["nonce"], body
+    except Exception as e:
+        sys.exit(f"FATAL: could not fetch a run nonce from {NONCE_URL}: {e}\n"
+                 f"Get one in a browser at https://computeassay.com/harness.html#nonce and pass --nonce.")
+
+
+def self_test():
+    curve = parse_busbw(SAMPLE)
+    assert len(curve) == 7, f"expected 7 rows, parsed {len(curve)}"
+    assert curve[1 << 30] == 188.64, curve[1 << 30]
+    assert curve[16 << 20] == 151.11
+    print(f"self-test ok · parsed {len(curve)} rows · busbw @1GiB {curve[1 << 30]} GB/s "
+          f"= {curve[1 << 30] * 8:.0f} Gbps", file=sys.stderr)
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Assay harness v0.1 — nccl-allreduce probe")
+    ap = argparse.ArgumentParser(description=f"Assay harness {HARNESS_VERSION} — nccl-allreduce probe")
     ap.add_argument("--binary", default="all_reduce_perf", help="path to nccl-tests all_reduce_perf")
     ap.add_argument("--launcher", default="", help='multi-node launcher prefix, e.g. "mpirun -np 64 -hostfile hosts"')
     ap.add_argument("--gpus", type=int, default=0, help="GPUs for single-node run (-g)")
-    ap.add_argument("--gpus-per-node", type=int, default=0, help="GPUs per node when using --launcher")
-    ap.add_argument("--nonce", default="", help="registry-issued run nonce (without it: self-reported, not Verified)")
+    ap.add_argument("--gpus-per-node", type=int, default=0, help="GPUs per process when using --launcher")
+    ap.add_argument("--nonce", default="", help="run nonce from /api/nonce (without one: self-reported, not Verified)")
+    ap.add_argument("--fetch-nonce", action="store_true", help=f"fetch a fresh nonce from {NONCE_URL}")
     ap.add_argument("--tenants", type=int, default=None, help="concurrent tenants on the fabric during the run (§8.2)")
     ap.add_argument("--allocation", default="", help="allocation description, e.g. '512 GPU / 64 node block' (§8.2)")
+    ap.add_argument("--max-sellable", action="store_true", help="declare: this allocation equals the largest unit you sell (§8.2)")
+    ap.add_argument("--line-rate-gbps", type=float, default=None, help="vendor-published per-GPU scale-out line rate, for delivered/line-rate")
+    ap.add_argument("--from-output", default="", help="parse an existing all_reduce_perf log instead of running")
     ap.add_argument("--sign", default="", help="GPG key id — writes a detached .asc next to the output")
     ap.add_argument("--out", default="", help="output path (default assay-probe-<ts>.json)")
+    ap.add_argument("--self-test", action="store_true", help="check the parser against a bundled sample and exit")
     args = ap.parse_args()
 
-    if not args.launcher and not shutil.which(args.binary):
-        sys.exit(f"FATAL: {args.binary} not found. Build https://github.com/NVIDIA/nccl-tests or pass --binary.")
+    if args.self_test:
+        return self_test()
 
-    g = f" -g {args.gpus}" if args.gpus and not args.launcher else ""
-    per_node = f" -g {args.gpus_per_node}" if args.gpus_per_node and args.launcher else ""
-    cmd = f"{args.launcher} {args.binary} -b 16M -e 1G -f 2{g}{per_node}".strip()
+    nonce_meta = None
+    if args.fetch_nonce:
+        args.nonce, nonce_meta = fetch_nonce()
+        print(f"nonce issued {nonce_meta.get('issued_utc')} · expires {nonce_meta.get('expires_utc')}", file=sys.stderr)
 
-    print(f"assay-harness {HARNESS_VERSION} · probe nccl-allreduce\n$ {cmd}", file=sys.stderr)
     started = time.time()
-    code, out, err = sh(cmd, timeout=3600)
-    if code != 0:
-        sys.exit(f"FATAL: probe failed ({code}).\n{err or out}")
+    if args.from_output:
+        with open(args.from_output) as f:
+            out = f.read()
+        cmd = f"(parsed from {args.from_output})"
+    else:
+        if not args.launcher and not shutil.which(args.binary):
+            sys.exit(f"FATAL: {args.binary} not found. Build https://github.com/NVIDIA/nccl-tests or pass --binary.")
+        g = f" -g {args.gpus}" if args.gpus and not args.launcher else ""
+        per_node = f" -g {args.gpus_per_node}" if args.gpus_per_node and args.launcher else ""
+        cmd = f"{args.launcher} {args.binary} -b 16M -e 1G -f 2{g}{per_node}".strip()
+        print(f"assay-harness {HARNESS_VERSION} · probe nccl-allreduce\n$ {cmd}", file=sys.stderr)
+        code, out, err = sh(cmd, timeout=3600)
+        if code != 0:
+            sys.exit(f"FATAL: probe failed ({code}).\n{err or out}")
+
     curve = parse_busbw(out)
     if not curve:
-        sys.exit("FATAL: could not parse busbw from all_reduce_perf output — pass the raw output to the registry instead.")
+        sys.exit("FATAL: could not parse busbw from all_reduce_perf output — send the raw output to the registry instead.")
 
     one_gib = curve.get(1 << 30) or curve[max(curve)]
+    gbps = round(one_gib * 8, 1)  # GB/s -> Gbps
     result = {
         "probe": "nccl-allreduce",
         "spec": SPEC,
+        "harness_version": HARNESS_VERSION,
         "run_nonce": args.nonce or None,
+        "nonce_issued_utc": (nonce_meta or {}).get("issued_utc"),
         "verified_eligible": bool(args.nonce),
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
         "duration_s": round(time.time() - started, 1),
         "command": cmd,
-        "measured_allreduce_busbw_gbps": round(one_gib * 8, 1),  # GB/s -> Gbps
+        "measured_allreduce_busbw_gbps": gbps,
+        "busbw_at_bytes": (1 << 30) if (1 << 30) in curve else max(curve),
         "busbw_curve_GBps": {str(k): v for k, v in sorted(curve.items())},
+        "line_rate_reference_gbps": args.line_rate_gbps,
+        "delivered_over_line_rate": round(gbps / args.line_rate_gbps, 3) if args.line_rate_gbps else None,
         "disclosures": {  # §8.2 — recorded, cross-checked at ingestion
             "allocation": args.allocation or "NOT DECLARED",
+            "allocation_is_max_sellable": bool(args.max_sellable),
             "concurrent_tenants": args.tenants,
         },
-        "environment": capture_env(),
+        "environment": capture_env() if not args.from_output else {"harness_version": HARNESS_VERSION, "spec": SPEC, "note": "parsed from log; environment not captured"},
         "raw_output": out,
     }
     body = json.dumps(result, indent=1, sort_keys=True)
@@ -108,13 +178,16 @@ def main():
     out_path = args.out or f"assay-probe-{time.strftime('%Y%m%d-%H%M%S')}.json"
     with open(out_path, "w") as f:
         json.dump(result, f, indent=1, sort_keys=True)
-    print(f"busbw @1GiB: {one_gib:.1f} GB/s ({one_gib * 8:.0f} Gbps) · wrote {out_path}", file=sys.stderr)
+    ratio = f" · {result['delivered_over_line_rate']:.0%} of line rate" if result["delivered_over_line_rate"] else ""
+    print(f"busbw @{result['busbw_at_bytes'] >> 20} MiB: {one_gib:.1f} GB/s ({gbps:.0f} Gbps){ratio} · wrote {out_path}", file=sys.stderr)
 
     if args.sign:
         code, _, err = sh(f"gpg --local-user {args.sign} --armor --detach-sign {out_path}", timeout=60)
         print(f"signed: {out_path}.asc" if code == 0 else f"WARN: gpg failed: {err}", file=sys.stderr)
     if not args.nonce:
-        print("NOTE: no --nonce — this run ingests as self-reported, not Verified. Get one: reply 'harness' to any report issue.", file=sys.stderr)
+        print("NOTE: no nonce — this run ingests as self-reported, not Verified. Re-run with --fetch-nonce.", file=sys.stderr)
+    else:
+        print("Next: send the JSON (and .asc) to the registry — see https://computeassay.com/harness.html#submit", file=sys.stderr)
 
 
 if __name__ == "__main__":
